@@ -1,0 +1,6 @@
+text:
+  A few hours later the boy woke up to a bright morning.
+options:
+  - 
+    text: The boy had some breakfast and then went outside to check what had made the sound
+    next: FINAL_CHAPTER

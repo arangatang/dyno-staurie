@@ -1,0 +1,9 @@
+text:
+  One night, the boy woke up from a loud cracking sound just outside his house.
+options:
+  - 
+    text: The boy went outside to investigate
+    next: "3.1"
+  - 
+    text: The boy, who was used to these kind of sounds, quickly fell back asleep
+    next: "3.2"
