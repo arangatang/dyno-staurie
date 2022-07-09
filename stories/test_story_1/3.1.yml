@@ -5,6 +5,6 @@ options:
     text: he fetched a flashlight inside, and then returned
     next: FINAL_CHAPTER
   - 
-    text: he went back to bed to wait for the morning light, then he returner
-    next: FINAL_CHAPTER
+    text: he went back to bed to wait for the morning light
+    next: 3.2
 
