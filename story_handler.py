@@ -2,7 +2,6 @@ from functools import cached_property
 import logging
 from pathlib import Path
 from typing import Iterable, List
-import background_handler
 import yaml
 
 LAST_CHAPTER_PREFIX = "FINAL_CHAPTER"
@@ -96,3 +95,5 @@ def run_story(story_path: Path):
 
         answer = get_user_input(max_val=len(choices) - 1)
         current_chapter = chapter.get_path_for_choice(answer)
+
+

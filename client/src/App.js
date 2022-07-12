@@ -13,16 +13,40 @@ function App() {
     )
   }, [])
 
-
+  // incoming json will have the following structure
+  /**
+   * {
+   *    'text': ...,
+   *    'options': {
+   *        'option_id': 'text',
+   *        },
+   *    'image': <url to image>
+   * }
+   */
+  //data.text = "test"
+  //data.options = {"option1": "the first option"}
+  // data.image = 'https://www.w3schools.com/images/htmlvideoad_footer.png'
+   
   return (
     <div>
-        {(typeof data.members === 'undefined') ? (
-          <p>Loading...</p>
-        ) : (
-          data.members.map((member, i) => (
-            <p key={i}>{member}</p>
-          ))
-        )}
+      {(typeof data.text === 'undefined') ? (
+        <p>Loading...</p>
+      ) : (
+        <div>
+          <img
+            src={data.image}
+            alt={data.text}
+          />    
+          {
+
+            Object.entries(data.options).map(
+            ([option_id, text]) => (
+              <button key={option_id} id={option_id}>{text}</button>
+            ))
+          } 
+        </div>
+
+      )}
     </div>
   )
 }

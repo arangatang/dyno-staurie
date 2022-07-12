@@ -1,0 +1,34 @@
+body {
+    background-color: white;
+}
+
+img {
+    display: block;
+    width: 500px;
+    margin-left: auto;
+    margin-right: auto;
+    margin-top: 60px;
+}
+
+p {
+    text-align: center;
+    line-height: 100px;
+    font-size: xx-large;
+}
+
+.center{
+    width: 50%;
+    margin: 0 auto;
+    background-color: ivory;
+    border-style: ridge;
+}
+
+a {
+    text-align: center;
+    font-size: x-large;
+    padding: 0 20px 0 20px
+}
+
+.center:hover {
+    background-color: green;
+}

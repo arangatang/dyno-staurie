@@ -5,7 +5,6 @@ import click
 import logging
 
 import story_handler
-import background_handler
 
 def main():
     story = "C:/Users/leona/Desktop/stories/dyno-staurie/stories/test_story_1"
