@@ -112,8 +112,19 @@ def get_edge(_from, to):
     )
 
 
-def get_node(id, label):
-    return '{ id: "%s", label: "%s" },' % (id, label)
+def get_node(id: str, label: str):
+    green = "#00FF00"
+    red = "#FF0000"
+    color = ''
+    node_color = "#4DA4EA"
+    if id.startswith("-"):
+        node_color = red
+    elif id.startswith("1"):
+        node_color = green
+    
+    if node_color:
+        color = 'color: { background: "%s"}' % node_color
+    return '{ id: "%s", label: "%s", %s },' % (id, label, color)
 
 
 def get_nodes(chapters: Dict[str, Chapter]):
@@ -135,7 +146,7 @@ def get_edit_window(chapter: Chapter, next_choice_id: int):
         options.append(get_edit_window_existing_option(option_id, option_text))
     return get_edit_window_html().format(
         CHAPTER_ID=chapter.chapter_id,
-        IMAGE="", # chapter.image, # TODO remove
+        IMAGE= chapter.image, # TODO remove
         EXISTING_OPTIONS="""
         """.join(options),
         STORY_ID=chapter.chapter_id,
@@ -224,19 +235,21 @@ def get_style():
     html {
         height: 100%;
     }
+    
     body {
         min-height: 100%;
     }
     
     #mynetwork {
         width: 100%;
-        height: 50%;
+        height: 100%;
         border: 1px solid lightgray;
-        min-height: 50%
+        min-height: 100%;
     }
     
     center { 
-        min-height: 50%
+        width: 100vw;
+        height: 50vh;
     }
     """
 
@@ -277,7 +290,7 @@ def get_html():
                 nodes: nodes,
                 edges: edges,
             };
-            var options = { };
+            var options = { layout : { randomSeed: 1994 }};
             var network = new vis.Network(container, data, options);
             network.on( 'click', function(properties) {
                 var ids = properties.nodes;
