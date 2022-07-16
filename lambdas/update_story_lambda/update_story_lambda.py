@@ -1,10 +1,15 @@
+from faulthandler import disable
 from typing import Dict, List
 import boto3
 from boto3.dynamodb.types import TypeDeserializer
 
+
+DDB_TABLE = "arn:aws:dynamodb:eu-central-1:679585051464:table/stories"
+DDB_TABLE_NAME = "stories"
+
+
 ddbclient = boto3.client("dynamodb")
-
-
+table = boto3.resource('dynamodb').Table(DDB_TABLE_NAME)
 class ChapterOptions:
     options: List[dict]
 
@@ -19,70 +24,172 @@ class ChapterOptions:
 
     def get_path_for_choice(self, option: int) -> str:
         return str(self.options[option].get("next"))
+    
+    def has_options(self) -> bool:
+        return len(self.options) > 0
 
 
 class Chapter:
     text: str = ""
     options: ChapterOptions = ""
     is_final_chapter: bool = True
+    is_work_in_progress: bool = True
+    is_start_node: bool = True
     chapter_id = ""
     image = ""
-
-    def __init__(self, chapter: dict):
+    chapter = {}
+    
+    def __init__(self, chapter: dict, filter_choices: bool = True):
         # Chapter numbers start with 1.yml
         # For multiple choices subsequent
-        if not chapter.get("text"):
-            raise ValueError("Found chapter without text", chapter)
-        else:
-            self.text = chapter["text"]
+        self.chapter = chapter
+        self.text = chapter.get("text", None)
+        self.filter_choices = filter_choices
 
         self.chapter_id = chapter["chapter"]
-        self.image = chapter["image"]
+        self.image = chapter.get("image", "")
         self.options = ChapterOptions(chapter.get("options", []))
-        self.is_final_chapter = (
-            self.chapter_id.startswith(LAST_CHAPTER_PREFIX) or not self.options
-        )
+
+        self.is_final_chapter = not self.options.has_options()
+        self.is_work_in_progress = chapter.get("is_work_in_progress", False)
+        self.is_start_node = chapter.get("is_start_node", False)
+        self.disabled_options = chapter.get("disabled_options", [])
 
     def get_choices(self) -> Dict[str, str]:
         if self.is_final_chapter:
             return {}
-        return self.options.get_choices()
+        if self.filter_choices:
+            return {k:v for k, v in self.options.get_choices().items() if k not in self.disabled_options}
+        else:
+            return {k:v for k, v in self.options.get_choices().items()}
 
     def get_path_for_choice(self, choice):
         if self.is_final_chapter:
             raise ValueError(f"No options available for chapter {self.chapter_id}")
         return self.options.get_path_for_choice(choice)
+    
+    def is_final(self):
+        return self.is_final_chapter
+    
+    def is_start(self):
+        return self.is_start_node
+    
+    def is_unfinished(self):
+        return self.is_work_in_progress
 
 
 def lambda_handler(event, context):
     params = event.get("queryStringParameters", {})
+    if not(params):
+        return error_page("Invalid get parameters")
+
     chapter_id = params.get("chapter_id", None)
+    chapter_text = params.get("chapter_text", None)
+    story_id = params.get("story_id", None)
+    
+    if not chapter_text or not chapter_id or not story_id:
+        return error_page(reason="text, chapter id and story id are required")
+    
     new_option_id = params.get("new_option_id", None)
     new_option_text = params.get("new_option_text", None)
-    story_id = params.get("story_id", None)
-    options = {
+    
+    existing_options = {
         k.replace("option_", ""): v
         for k, v in params.items()
         if k.startswith("option_")
     }
 
-    # TODO
-    # 1. parse the passed data for obvious maliciousness
-    # 2. for each field, update the table if different
+    for i in (chapter_id, story_id, chapter_text, new_option_id, new_option_text, *existing_options.keys(), *existing_options.values()):
+        check_input(i)
+
+    chapter = get_chapter(story_id=story_id, chapter_id=chapter_id)
+    disabled_options = chapter.disabled_options
+    
+    if len(chapter.get_choices()) != len(existing_options):
+        return error_page(reason="invalid amount of options")
+    
+    print("Existing options: ", existing_options)
+    for key in chapter.get_choices().keys():
+        # protect against URL tampering, rn we only support adding options or editing existing ones
+        # otherwise the graph could inadvertently be split into two causing the end of the world
+        if str(key) not in existing_options.keys():
+            return error_page(reason=f"passed key {key} does not match the data stored for the chapter: {existing_options.keys()}")
+
+    
+    # Create a new chapter if new_option_text is set and no existing chapter with that id exists
+    if new_option_text and new_option_id:
+        if not isinstance(get_chapter(story_id=story_id, chapter_id=new_option_id), Chapter):
+            # Upload new chapter before updating existing chapter to avoid dead nodes
+            table.put_item(
+                Item=dict(
+                    story=story_id,
+                    chapter=new_option_id,
+                    is_work_in_progress=True
+                )
+            )
+            disabled_options.append(new_option_id)
+        existing_options[new_option_id] = new_option_text
+            
+    
+
+    # Create the updated chapter
+    ddb_item = dict(
+        story = story_id,
+        chapter = chapter_id,
+        image = chapter.image,
+        text = chapter.text if not chapter_text else chapter_text,
+    )
+    
+    if existing_options:
+        ddb_item["options"] = [{"next":key, "text": value} for key, value in existing_options.items()]
+    if chapter.is_start():
+        ddb_item["is_start_node"] = True
+    if disabled_options:
+        ddb_item["disabled_options"] = disabled_options
+
+    # Upload the updated chapter
+    print(f"Uploading chapter: {ddb_item}")
+    table.put_item(
+        Item=ddb_item
+    )
+    
+    # Return HTML with 2 buttons, one to view the new chapter and one to return to the edit screen for the newly created chapter
+
     return {
         "statusCode": 200,
         "headers": {"Content-Type": "text/html"},
         "body": generate_body(
-            get_edit_windows(chapters, story_id=story_id, current_chapter=chapter_id),
-            nodes,
-            edges,
+            story_id=story_id,
             chapter_id=chapter_id,
+            new_option_id=new_option_id if new_option_text else None,
         ),
     }
 
+def get_chapter(story_id, chapter_id):
+    print(f"Querying for story: {story_id} and chapter: {chapter_id}")
+    response = ddbclient.query(
+        TableName=DDB_TABLE_NAME,
+        KeyConditionExpression="story = :story AND chapter = :chapter",
+        ExpressionAttributeValues={
+            ":story": {"S": story_id},
+            ":chapter": {"S": chapter_id},
+        },
+    )
+    print("Got response")
+    print(response)
+    
+    items = response.get("Items", [])
+    if len(items) != 1:
+        return error_page()
+    _chapter = from_dynamodb_to_json(items[0])
+    return Chapter(chapter=_chapter, filter_choices=False)
 
-def error_page():
-    return {"statusCode": 404, "body": ""}
+def check_input(text):
+    # TODO what would be deemed malicious / could we check this before sending request?
+    pass
+
+def error_page(reason: str = ''):
+    return {"statusCode": 404, "body": f"{reason}"}
 
 
 def from_dynamodb_to_json(item):
@@ -90,105 +197,17 @@ def from_dynamodb_to_json(item):
     return {k: d.deserialize(value=v) for k, v in item.items()}
 
 
-def get_edge(_from, to):
-    return '{ from: %s, to: %s, arrows: { to: { enabled: true, type: "arrow" }}},' % (
-        _from,
-        to,
-    )
-
-
-def get_node(id: str, label: str):
-    green = "#00FF00"
-    red = "#FF0000"
-    color = ""
-    node_color = "#4DA4EA"
-    if id.startswith("-"):
-        node_color = red
-    elif id.startswith("1"):
-        node_color = green
-
-    if node_color:
-        color = 'color: { background: "%s"}' % node_color
-    return '{ id: "%s", label: "%s", %s },' % (id, label, color)
-
-
-def get_nodes(chapters: Dict[str, Chapter]):
-    return "\n".join([get_node(key, key) for key in chapters.keys()])
-
-
-def get_edit_window_existing_option(option_id: str, option_text: str):
-    return """
-        <label for="{option_id}">Choice leading to chapter: {option_id}</label>
-        <input type="text" id="option_{option_id}" name="option_{option_id}" default="{option_text}" value="{option_text}"><br><br>
-    """.format(
-        option_id=option_id, option_text=option_text
-    )
-
-
-def get_edit_window(
-    chapter: Chapter, next_choice_id: int, story_id: str, should_show: bool
-):
-    options = []
-    for option_id, option_text in chapter.get_choices().items():
-        options.append(get_edit_window_existing_option(option_id, option_text))
-
-    return get_edit_window_html().format(
-        CHAPTER_ID=chapter.chapter_id,
-        IMAGE=chapter.image,
-        EXISTING_OPTIONS="""
-        """.join(
-            options
-        ),
-        STORY_ID=story_id,
-        NEXT_CHOICE_ID=next_choice_id,
-        CHAPTER_TEXT=chapter.text,
-        DISPLAY=' edit-window-clicked" style="display: block' if should_show else "",
-    )
-
-
-def get_edit_windows(chapters: Dict[str, Chapter], story_id: str, current_chapter: str):
-    next_choice_id = max([int(id.split(".")[0]) for id in chapters]) + 1
-    return "".join(
-        [
-            get_edit_window(
-                chapter,
-                next_choice_id,
-                story_id=story_id,
-                should_show=current_chapter == chapter_id,
-            )
-            for chapter_id, chapter in chapters.items()
-        ]
-    )
-
-
-def get_edges(chapters: Dict[str, Chapter]):
-    edges = []
-    for chapter_id, chapter in chapters.items():
-        for choice in chapter.get_choices().keys():
-            edges.append(get_edge(chapter_id, choice))
-    return """
-    """.join(
-        edges
-    )
-
-
-def select_node(node_id):
-    return node_id if node_id else ""
-
-
-def generate_body(edit_windows, nodes, edges, chapter_id):
+def generate_body(story_id, chapter_id, new_option_id):
     html = get_html()
     style = get_style()
-    formatted = html % (style, edit_windows, nodes, edges, select_node(chapter_id))
+    
+    new_chapter_button = f'<div class=center><a id="edit_new_chapter_button class="button" href=https://bne1jvubt0.execute-api.eu-central-1.amazonaws.com/default/edit?story={story_id}&chapter={new_option_id}><center>Edit the newly created chapter</center></a></div>' if new_option_id else ''
+    view_updated_chapter_button = f'<div class=center><a id="view_edited_chapter_button class="button" href=https://bne1jvubt0.execute-api.eu-central-1.amazonaws.com/default/story-handler?story={story_id}&chapter={chapter_id}><center>View your changes to chapter {chapter_id}</center></a></div>'
+    buttons = [new_chapter_button, view_updated_chapter_button]
+    formatted = html % (style, "".join(buttons))
     # print(formatted)
     return formatted
 
-
-DDB_TABLE = "arn:aws:dynamodb:eu-central-1:679585051464:table/stories"
-
-DDB_TABLE_NAME = "stories"
-
-LAST_CHAPTER_PREFIX = "-"
 
 
 def get_style():
@@ -284,77 +303,13 @@ def get_html():
     </head>
 
     <body>
-        <center>
-            <div id="mynetwork"></div>
-        </center>
-        <div id="edit_windows">
+        <div>
             %s
-        </div>
-        <script type="text/javascript">
-            // create an array with nodes
-            var nodes = new vis.DataSet([
-                %s
-            ]);
-
-            // create an array with edges
-            var edges = new vis.DataSet([
-                %s
-            ]);
-
-            // create a network
-            var container = document.getElementById("mynetwork");
-            var data = {
-                nodes: nodes,
-                edges: edges,
-            };
-            var options = { layout : { randomSeed: 1994 }};
-            var network = new vis.Network(container, data, options);
-            network.selectNodes([%s]);
-
-            network.on( 'click', function(properties) {
-                var ids = properties.nodes;
-                var clickedNodes = nodes.get(ids);
-                console.log('clicked nodes:', clickedNodes);
-                if(clickedNodes.length == 1){
-                    console.log("clicked node:", "edit-window-"+clickedNodes[0].id)
-                    var clicked = document.getElementById("edit-window-"+clickedNodes[0].id);
-                    clicked.style.display = "block";
-                } 
-                var clickedClassName = "edit-window-clicked"
-                var previouslyClicked = document.getElementsByClassName(clickedClassName);
-                if(previouslyClicked.length == 1){
-                    previouslyClicked[0].style.display = "none";
-                    previouslyClicked[0].classList.remove(clickedClassName);
-                }
-                clicked.classList.add(clickedClassName);   
-            });
-        </script>
+        <div>
     </body>
 
     </html>
     """
-
-
-def get_edit_window_html():
-    return """
-    <div class="edit-window{DISPLAY}" id="edit-window-{CHAPTER_ID}">
-        <img src="{IMAGE}" loading="lazy">
-        <form action="/process_edit_story" method="get">
-            <label for="_text">Chapter text: </label>
-            <input type="text" id="_text" name="_text" value="{CHAPTER_TEXT}"><br><br>
-            {EXISTING_OPTIONS}
-            <label for="new_option">New choice text: </label>
-            <input type="text" id="new_option_text" name="new_option_text"><br><br>
-            
-            <input type="hidden" id="new_option_id" name="new_option_id" value="{NEXT_CHOICE_ID}"><br><br>
-            <input type="hidden" name="story_id" value={STORY_ID} class="hidden">
-            <input type="hidden" name="chapter_id" value={CHAPTER_ID} class="hidden">
-
-            <input type="submit" value="Submit">
-        </form>
-    </div>
-    """
-
 
 if __name__ == "__main__":
     lambda_handler(

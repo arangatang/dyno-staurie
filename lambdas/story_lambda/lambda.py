@@ -6,6 +6,7 @@ from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
 DDB_TABLE = "arn:aws:dynamodb:eu-central-1:679585051464:table/stories"
 DDB_TABLE_NAME = "stories"
 LAST_CHAPTER_PREFIX = "FINAL_CHAPTER"
+DEFAULT_IMAGE = "https://story-images.s3.eu-central-1.amazonaws.com/stories/test_story_1/images/1-0.png"
 
 ddbclient = boto3.client("dynamodb")
 
@@ -39,8 +40,8 @@ def lambda_handler(event, context):
 
     _chapter = from_dynamodb_to_json(items[0])
     chapter = Chapter(chapter=_chapter)
-    image = _chapter.get("image")
-    text = _chapter.get("text")
+    image = chapter.image
+    text = chapter.text
     choices = chapter.get_choices()
 
     return {
@@ -68,7 +69,7 @@ def generate_body(story_name: str, image: str, text: str, options: Dict[str, str
     )
     content = f"""
     <div>
-        <img src={image} alt={text}/>
+        <img src='{image}' alt='{text}'/>
         <p id=text>{text}</p>
         {buttons}
     </div>
@@ -91,7 +92,6 @@ def generate_body(story_name: str, image: str, text: str, options: Dict[str, str
     """
     return body
 
-
 class ChapterOptions:
     options: List[dict]
 
@@ -106,35 +106,59 @@ class ChapterOptions:
 
     def get_path_for_choice(self, option: int) -> str:
         return str(self.options[option].get("next"))
+    
+    def has_options(self) -> bool:
+        return len(self.options) > 0
 
 
 class Chapter:
     text: str = ""
     options: ChapterOptions = ""
     is_final_chapter: bool = True
-
+    is_work_in_progress: bool = True
+    is_start_node: bool = True
+    chapter_id = ""
+    image = ""
+    chapter = {}
+    
+    
     def __init__(self, chapter: dict):
         # Chapter numbers start with 1.yml
         # For multiple choices subsequent
-        if not chapter.get("text"):
-            raise ValueError("Found chapter without text", chapter)
-        else:
-            self.text = chapter["text"]
+        self.chapter = chapter
+        self.text = chapter.get("text", None)
+            
+        self.chapter_id = chapter["chapter"]
+        self.image = chapter.get("image", DEFAULT_IMAGE)
+        if not self.image:
+            self.image = DEFAULT_IMAGE
+            
+        self.options = ChapterOptions(chapter.get("options", []))
 
-        self.is_final_chapter = chapter["chapter"].startswith(LAST_CHAPTER_PREFIX)
+        self.is_final_chapter = not self.options.has_options()
+        self.is_work_in_progress = chapter.get("is_work_in_progress", False)
+        self.is_start_node = chapter.get("is_start_node", False)
+        self.disabled_options = chapter.get("disabled_options", [])
 
-        if not self.is_final_chapter:
-            # if no option given, then always set next chapter as current chapter + 1
-            self.options = ChapterOptions(chapter.get("options"))
-
-    def get_choices(self):
+    def get_choices(self) -> Dict[str, str]:
         if self.is_final_chapter:
             return {}
-
-        return self.options.get_choices()
+        return {k:v for k, v in self.options.get_choices().items() if k not in self.disabled_options}
 
     def get_path_for_choice(self, choice):
+        if self.is_final_chapter:
+            raise ValueError(f"No options available for chapter {self.chapter_id}")
         return self.options.get_path_for_choice(choice)
+    
+    def is_final(self):
+        return self.is_final_chapter
+    
+    def is_start(self):
+        return self.is_start_node
+    
+    def is_unfinished(self):
+        return self.is_work_in_progress
+
 
 
 def get_style():

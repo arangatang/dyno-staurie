@@ -31,19 +31,13 @@ class Chapter:
     image = ""
 
     def __init__(self, chapter: dict):
-        # Chapter numbers start with 1.yml
-        # For multiple choices subsequent
-        if not chapter.get("text"):
-            raise ValueError("Found chapter without text", chapter)
-        else:
-            self.text = chapter["text"]
-            
+        self.is_work_in_progress = chapter.get("is_work_in_progress", False)
+        self.text = chapter.get("text", "")
         self.chapter_id = chapter["chapter"]
-        self.image = chapter["image"]
+        self.image = chapter.get("image", "")
         self.options = ChapterOptions(chapter.get("options", []))
 
         self.is_final_chapter = not self.options.has_options()
-        self.is_work_in_progress = chapter.get("is_work_in_progress", False)
         self.is_start_node = chapter.get("is_start_node", False)
 
     def get_choices(self) -> Dict[str, str]:
@@ -127,12 +121,12 @@ def get_edge(_from, to):
 
 
 def get_node(id: str, is_work_in_progress: bool, is_final: bool, is_start: bool):   
-    if is_final:
-        node_color = "#FF0000" # red
+    if is_work_in_progress:
+        node_color = "#FFFF00" # yellow
     elif is_start:
         node_color = "#00FF00" # green
-    elif is_work_in_progress:
-        node_color = "#FFFF00" # yellow
+    elif is_final:
+        node_color = "#FF0000" # red
     else:
         node_color = "#4DA4EA" # blue
         
@@ -357,13 +351,14 @@ def get_edit_window_html():
     return  """
     <div class="edit-window{DISPLAY}" id="edit-window-{CHAPTER_ID}">
         <img src="{IMAGE}" loading="lazy">
-        <form action="/process_edit_story" method="get">
-            <label for="_text">Chapter text: </label>
-            <input type="text" id="_text" name="_text" value="{CHAPTER_TEXT}"><br><br>
+        <form action="update_story" method="get">
+            <label for="chapter_text">Chapter text: </label>
+            <input type="text" id="chapter_text" name="chapter_text" value="{CHAPTER_TEXT}"><br><br>
             {EXISTING_OPTIONS}
             <label for="new_option">New choice text: </label>
             <input type="text" id="new_option_text" name="new_option_text"><br><br>
-            <input type="hidden" id="new_option_id" name="new_option_id" value="{NEXT_CHOICE_ID}"><br><br>
+            <label for="new_option_id">The new choice should go to chapter with id: </label>
+            <input type="text" id="new_option_id" name="new_option_id" value="{NEXT_CHOICE_ID}"><br><br>
             <input type="hidden" name="story_id" value={STORY_ID} class="hidden">
             <input type="hidden" name="chapter_id" value={CHAPTER_ID} class="hidden">
 
