@@ -16,10 +16,9 @@ def lambda_handler(event, context):
     story_id = event.get("queryStringParameters", {}).get("story", None)
 
     if not chapter_id or not story_id:
-        #return error_page()
+        # return error_page()
         chapter_id = "1"
         story_id = "test_story"
-        
 
     print(f"Querying for story: {story_id} and chapter: {chapter_id}")
     response = ddbclient.query(
@@ -30,10 +29,10 @@ def lambda_handler(event, context):
             ":chapter": {"S": chapter_id},
         },
     )
-    
+
     print("Got response")
     print(response)
-    
+
     items = response.get("Items", [])
     if len(items) != 1:
         return error_page()
@@ -92,6 +91,7 @@ def generate_body(story_name: str, image: str, text: str, options: Dict[str, str
     """
     return body
 
+
 class ChapterOptions:
     options: List[dict]
 
@@ -106,7 +106,7 @@ class ChapterOptions:
 
     def get_path_for_choice(self, option: int) -> str:
         return str(self.options[option].get("next"))
-    
+
     def has_options(self) -> bool:
         return len(self.options) > 0
 
@@ -120,19 +120,16 @@ class Chapter:
     chapter_id = ""
     image = ""
     chapter = {}
-    
-    
-    def __init__(self, chapter: dict):
+
+    def __init__(self, chapter: dict, filter_choices: bool = True):
         # Chapter numbers start with 1.yml
         # For multiple choices subsequent
         self.chapter = chapter
         self.text = chapter.get("text", None)
-            
+        self.filter_choices = filter_choices
+
         self.chapter_id = chapter["chapter"]
-        self.image = chapter.get("image", DEFAULT_IMAGE)
-        if not self.image:
-            self.image = DEFAULT_IMAGE
-            
+        self.image = chapter.get("image", "")
         self.options = ChapterOptions(chapter.get("options", []))
 
         self.is_final_chapter = not self.options.has_options()
@@ -143,22 +140,28 @@ class Chapter:
     def get_choices(self) -> Dict[str, str]:
         if self.is_final_chapter:
             return {}
-        return {k:v for k, v in self.options.get_choices().items() if k not in self.disabled_options}
+        if self.filter_choices:
+            return {
+                k: v
+                for k, v in self.options.get_choices().items()
+                if k not in self.disabled_options
+            }
+        else:
+            return {k: v for k, v in self.options.get_choices().items()}
 
     def get_path_for_choice(self, choice):
         if self.is_final_chapter:
             raise ValueError(f"No options available for chapter {self.chapter_id}")
         return self.options.get_path_for_choice(choice)
-    
+
     def is_final(self):
         return self.is_final_chapter
-    
+
     def is_start(self):
         return self.is_start_node
-    
+
     def is_unfinished(self):
         return self.is_work_in_progress
-
 
 
 def get_style():
