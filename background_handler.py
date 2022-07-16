@@ -12,10 +12,14 @@ import numpy as np
 from PIL import Image
 from tqdm.notebook import trange
 from flax.jax_utils import replicate
+from flax.training.common_utils import shard
+from time import sleep
 
 DDB_TABLE_NAME = "stories"
 IMAGE_OUTPUT_PATH = "images"
 BUCKET_NAME = "story-images"
+SQS_POLL_SLEEP_TIME = 60
+IMAGE_SIZE = 256  # nothing else works without retraining the model maybe use this: https://github.com/alexjc/neural-enhance
 import boto3
 
 
@@ -67,7 +71,7 @@ def setup_dali_mini():
         return vqgan.decode_code(indices, params=params)
 
     # create a random key
-    seed = random.randint(0, 2**32 - 1)
+    seed = random.randint(0, 2 ** 32 - 1)
     key = jax.random.PRNGKey(seed)
 
     processor = DalleBartProcessor.from_pretrained(
@@ -102,6 +106,7 @@ def generate_images(
     # We can customize generation parameters (see https://huggingface.co/blog/how-to-generate)
     text_to_file_dict = {v: k for k, v in texts_to_process.items()}
     image_paths = []
+    images = []
     for text in texts_to_process.values():
         prompts = [text]
         tokenized_prompts = processor(prompts)
@@ -126,13 +131,20 @@ def generate_images(
             encoded_images = encoded_images.sequences[..., 1:]
             # decode images
             decoded_images = p_decode(encoded_images, vqgan_params)
-            decoded_images = decoded_images.clip(0.0, 1.0).reshape((-1, 256, 256, 3))
+            decoded_images = decoded_images.clip(0.0, 1.0).reshape(
+                (-1, IMAGE_SIZE, IMAGE_SIZE, 3)
+            )
             for decoded_img in decoded_images:
-                img = Image.fromarray(np.asarray(decoded_img * 255, dtype=np.uint8))
+                img = Image.fromarray(
+                    np.asarray(decoded_img * (IMAGE_SIZE - 1), dtype=np.uint8)
+                )
+                images.append(img)
                 save_to = path / f"{text_to_file_dict.get(text)}-{i}.png"
+                save_to.parent.mkdir(parents=True, exist_ok=True)
                 img.save(save_to)
                 print("saved image to:" + str(save_to))
                 image_paths.append(save_to)
+    return image_paths, images
 
 
 def run_dali_mini(texts_to_process: dict, path: Path):
@@ -183,7 +195,7 @@ def run_dali_mini(texts_to_process: dict, path: Path):
         return vqgan.decode_code(indices, params=params)
 
     # create a random key
-    seed = random.randint(0, 2**32 - 1)
+    seed = random.randint(0, 2 ** 32 - 1)
     key = jax.random.PRNGKey(seed)
 
     processor = DalleBartProcessor.from_pretrained(
@@ -224,40 +236,44 @@ def run_dali_mini(texts_to_process: dict, path: Path):
             encoded_images = encoded_images.sequences[..., 1:]
             # decode images
             decoded_images = p_decode(encoded_images, vqgan_params)
-            decoded_images = decoded_images.clip(0.0, 1.0).reshape((-1, 256, 256, 3))
+            decoded_images = decoded_images.clip(0.0, 1.0).reshape(
+                (-1, IMAGE_SIZE, IMAGE_SIZE, 3)
+            )
             for decoded_img in decoded_images:
-                img = Image.fromarray(np.asarray(decoded_img * 255, dtype=np.uint8))
+                img = Image.fromarray(
+                    np.asarray(decoded_img * (IMAGE_SIZE - 1), dtype=np.uint8)
+                )
                 save_to = path / f"{text_to_file_dict.get(text)}-{i}.png"
                 img.save(save_to)
                 print("saved image to:" + str(save_to))
 
 
 def get_messages(queue):
+    print("Starting to poll for messages...")
     while True:
         for message in queue.receive_messages(
             MessageAttributeNames=["story", "chapter"], MaxNumberOfMessages=10
         ):
             if not message or not message.body:
-                return
-
-            yield dict(
-                text=message.body,
-                story_id=message.message_attributes.get("story").get("StringValue"),
-                chapter_id=message.message_attributes.get("chapter").get("StringValue"),
-                message=message,
-            )
-
-
-def delete_messages(messages):
-    for message in messages:
-        message.delete()
+                print(f"Queue is empty, sleeping for {SQS_POLL_SLEEP_TIME} seconds")
+                sleep(SQS_POLL_SLEEP_TIME)
+                print("Done sleeping")
+            else:
+                yield dict(
+                    text=message.body,
+                    story_id=message.message_attributes.get("story").get("StringValue"),
+                    chapter_id=message.message_attributes.get("chapter").get(
+                        "StringValue"
+                    ),
+                    message=message,
+                )
 
 
 def upload_images(image_paths, story, s3):
     s3_paths = []
     for path in image_paths:
         # 1. upload to s3
-        s3_path = f'/stories/{story}/images/{path.name}'
+        s3_path = f"stories/{story}/images/{path.name}"
         s3.upload_file(str(path), BUCKET_NAME, s3_path)
         s3_paths.append(s3_path)
     return s3_paths
@@ -272,59 +288,109 @@ def set_public_tag(s3_paths, s3):
             Tagging={"TagSet": [{"Key": "public", "Value": "yes"}]},
         )
 
-def set_default_image(s3_path, story, chapter, ddb_client):
-    ddb_client.update_item(
-        TableName = DDB_TABLE_NAME,
+
+def set_default_image(
+    s3_path,
+    story,
+    chapter,
+    ddb,
+):
+    ddb.update_item(
+        TableName=DDB_TABLE_NAME,
         Key={
-            "story": story,
-            "chapter": chapter,
+            "story": str(story),
+            "chapter": str(chapter),
         },
         UpdateExpression="set image = :image",
         ExpressionAttributeValues={
-            ':image': f'https://{BUCKET_NAME}.s3.eu-central-1.amazonaws.com/{s3_path}',
+            ":image": f"https://{BUCKET_NAME}.s3.eu-central-1.amazonaws.com/{s3_path}"
         },
     )
+
+
+def setup_clip():
+    CLIP_REPO = "openai/clip-vit-base-patch32"
+    CLIP_COMMIT_ID = None
+
+    # Load CLIP
+    clip, clip_params = FlaxCLIPModel.from_pretrained(
+        CLIP_REPO, revision=CLIP_COMMIT_ID, dtype=jnp.float16, _do_init=False
+    )
+    clip_processor = CLIPProcessor.from_pretrained(CLIP_REPO, revision=CLIP_COMMIT_ID)
+    clip_params = replicate(clip_params)
+
+    # score images
+    @partial(jax.pmap, axis_name="batch")
+    def p_clip(inputs, params):
+        logits = clip(params=params, **inputs).logits_per_image
+        return logits
+
+    return {
+        "clip_processor": clip_processor,
+        "p_clip": p_clip,
+        "clip_params": clip_params,
+    }
+
+
+def run_clip(prompts, images, clip_processor, p_clip, clip_params):
+    # get clip scores
+    clip_inputs = clip_processor(
+        text=prompts * jax.device_count(),
+        images=images,
+        return_tensors="np",
+        padding="max_length",
+        max_length=77,
+        truncation=True,
+    ).data
+    logits = p_clip(shard(clip_inputs), clip_params)
+
+    # organize scores per prompt
+    p = len(prompts)
+    logits = np.asarray([logits[:, i::p, i] for i in range(p)]).squeeze()
+    return logits[0].argsort()[::-1][0]
+
+
 if __name__ == "__main__":
     # 1. authenticate
-    ddbclient = boto3.client("dynamodb")
     table = boto3.resource("dynamodb").Table(DDB_TABLE_NAME)
     sqs = boto3.resource("sqs")
-    s3 = boto3.resource("s3")
+    s3 = boto3.client("s3")
     queue = sqs.get_queue_by_name(QueueName="stories-texts-to-process.fifo")
 
     # 2. poll messages
-    setup_params = setup_dali_mini()
-    base_path = Path("/home/leonardo/Desktop/stories/dyno-staurie/stories/")
+    dali_params = setup_dali_mini()
+    # clip_params = setup_clip()
+    base_path = Path("/home/leonardo/Desktop/stories/dyno-staurie/stories")
     for i in get_messages(queue=queue):
         chapter = i["chapter_id"]
-        story = i['story_id']
+        story = i["story_id"]
+        text = i["text"]
+        print(f"Recieved message, story: {story}, chapter: {chapter}, text: {text}")
         # 3. process messages
-        image_paths = generate_images(
+        image_paths, images = generate_images(
             texts_to_process={chapter: i["text"]},
             path=base_path / f"{story}/images",
-            **setup_params,
+            **dali_params,
         )
-        # 4. upload each to s3
+        # best_idx = run_clip([text], images, **clip_params)
+        # print(f"Best image per CLIP score: {image_paths[best_idx]}")
+
+        # 4. upload each image to s3
         s3_paths = upload_images(image_paths, story, s3)
+        # change this to use best_idx when clip is working again
+        best_image = s3_paths[0]
+        # print(f"Best image in S3 per CLIP score: {best_image}")
 
         # 5. make the images publicly accessible
         set_public_tag(s3_paths, s3)
 
         # 6. update DDB
-        set_default_image(s3_paths[0], story, chapter, ddbclient)
-        
-    # 6. delete message
+        print(f"Setting default image for story: {story} and chapter: {chapter}")
+        set_default_image(best_image, story, chapter, table)
 
-    # run_dali_mini(
-    #     texts_to_process={
-    #         "1": "Once upon a time there was a young boy",
-    #         "2": "He lived in a small wooden house in a large forest",
-    #         "3": "One night, the boy woke up from a loud cracking sound just outside the house.",
-    #         "3.1": "It was dark outside so he could not see anything",
-    #         "3.2": "A few hours later he woke up to a sunny morning",
-    #         "FINAL_CHAPTER": "The boy saw that the old oak tree had fallen over and inside sat a small girl with purple eyes. Then the boy woke up.",
-    #     },
-    #     path=Path(
-    #         "/home/leonardo/Desktop/stories/dyno-staurie/stories/test_story_1/images"
-    #     ),
-    # )
+        # 7. delete message
+        print("Deleting message from queue, processing finished")
+        try:
+            i["message"].delete()
+        except Exception as e:
+            print("Unable to delete message")
