@@ -1,4 +1,3 @@
-from faulthandler import disable
 from typing import Dict, List
 import boto3
 from boto3.dynamodb.types import TypeDeserializer
@@ -9,7 +8,11 @@ DDB_TABLE_NAME = "stories"
 
 
 ddbclient = boto3.client("dynamodb")
-table = boto3.resource('dynamodb').Table(DDB_TABLE_NAME)
+table = boto3.resource("dynamodb").Table(DDB_TABLE_NAME)
+sqs = boto3.resource("sqs")
+queue = sqs.get_queue_by_name(QueueName="stories-texts-to-process.fifo")
+
+
 class ChapterOptions:
     options: List[dict]
 
@@ -24,7 +27,7 @@ class ChapterOptions:
 
     def get_path_for_choice(self, option: int) -> str:
         return str(self.options[option].get("next"))
-    
+
     def has_options(self) -> bool:
         return len(self.options) > 0
 
@@ -38,7 +41,7 @@ class Chapter:
     chapter_id = ""
     image = ""
     chapter = {}
-    
+
     def __init__(self, chapter: dict, filter_choices: bool = True):
         # Chapter numbers start with 1.yml
         # For multiple choices subsequent
@@ -59,89 +62,104 @@ class Chapter:
         if self.is_final_chapter:
             return {}
         if self.filter_choices:
-            return {k:v for k, v in self.options.get_choices().items() if k not in self.disabled_options}
+            return {
+                k: v
+                for k, v in self.options.get_choices().items()
+                if k not in self.disabled_options
+            }
         else:
-            return {k:v for k, v in self.options.get_choices().items()}
+            return {k: v for k, v in self.options.get_choices().items()}
 
     def get_path_for_choice(self, choice):
         if self.is_final_chapter:
             raise ValueError(f"No options available for chapter {self.chapter_id}")
         return self.options.get_path_for_choice(choice)
-    
+
     def is_final(self):
         return self.is_final_chapter
-    
+
     def is_start(self):
         return self.is_start_node
-    
+
     def is_unfinished(self):
         return self.is_work_in_progress
 
 
 def lambda_handler(event, context):
     params = event.get("queryStringParameters", {})
-    if not(params):
+    if not (params):
         return error_page("Invalid get parameters")
 
     chapter_id = params.get("chapter_id", None)
     chapter_text = params.get("chapter_text", None)
     story_id = params.get("story_id", None)
-    
+
     if not chapter_text or not chapter_id or not story_id:
         return error_page(reason="text, chapter id and story id are required")
-    
+
     new_option_id = params.get("new_option_id", None)
     new_option_text = params.get("new_option_text", None)
-    
+
     existing_options = {
         k.replace("option_", ""): v
         for k, v in params.items()
         if k.startswith("option_")
     }
 
-    for i in (chapter_id, story_id, chapter_text, new_option_id, new_option_text, *existing_options.keys(), *existing_options.values()):
+    for i in (
+        chapter_id,
+        story_id,
+        chapter_text,
+        new_option_id,
+        new_option_text,
+        *existing_options.keys(),
+        *existing_options.values(),
+    ):
         check_input(i)
 
     chapter = get_chapter(story_id=story_id, chapter_id=chapter_id)
     disabled_options = chapter.disabled_options
-    
+
     if len(chapter.get_choices()) != len(existing_options):
         return error_page(reason="invalid amount of options")
-    
+
     print("Existing options: ", existing_options)
     for key in chapter.get_choices().keys():
         # protect against URL tampering, rn we only support adding options or editing existing ones
         # otherwise the graph could inadvertently be split into two causing the end of the world
         if str(key) not in existing_options.keys():
-            return error_page(reason=f"passed key {key} does not match the data stored for the chapter: {existing_options.keys()}")
+            return error_page(
+                reason=f"passed key {key} does not match the data stored for the chapter: {existing_options.keys()}"
+            )
 
-    
     # Create a new chapter if new_option_text is set and no existing chapter with that id exists
     if new_option_text and new_option_id:
-        if not isinstance(get_chapter(story_id=story_id, chapter_id=new_option_id), Chapter):
+        if not isinstance(
+            get_chapter(story_id=story_id, chapter_id=new_option_id), Chapter
+        ):
             # Upload new chapter before updating existing chapter to avoid dead nodes
             table.put_item(
                 Item=dict(
-                    story=story_id,
-                    chapter=new_option_id,
-                    is_work_in_progress=True
+                    story=story_id, chapter=new_option_id, is_work_in_progress=True
                 )
             )
             disabled_options.append(new_option_id)
         existing_options[new_option_id] = new_option_text
-            
-    
 
     # Create the updated chapter
+    text_was_updated = chapter_text != chapter.text
+    text_to_send = chapter_text if text_was_updated else chapter.text
     ddb_item = dict(
-        story = story_id,
-        chapter = chapter_id,
-        image = chapter.image,
-        text = chapter.text if not chapter_text else chapter_text,
+        story=story_id,
+        chapter=chapter_id,
+        image=chapter.image,
+        text=text_to_send,
     )
-    
+
     if existing_options:
-        ddb_item["options"] = [{"next":key, "text": value} for key, value in existing_options.items()]
+        ddb_item["options"] = [
+            {"next": key, "text": value} for key, value in existing_options.items()
+        ]
     if chapter.is_start():
         ddb_item["is_start_node"] = True
     if disabled_options:
@@ -149,12 +167,22 @@ def lambda_handler(event, context):
 
     # Upload the updated chapter
     print(f"Uploading chapter: {ddb_item}")
-    table.put_item(
-        Item=ddb_item
-    )
-    
-    # Return HTML with 2 buttons, one to view the new chapter and one to return to the edit screen for the newly created chapter
+    table.put_item(Item=ddb_item)
 
+    try:
+        if text_was_updated:
+            print("text was updated, attempting to send message to SQS")        
+            queue.send_message(
+                MessageBody=text_to_send,
+                MessageAttributes={
+                    "story": {"StringValue": story_id, "DataType": "String"},
+                    "chapter": {"StringValue": chapter_id, "DataType": "String"},
+                },
+                MessageGroupId=f"{story_id}#{chapter_id}"
+            )
+    except Exception as e:
+        print(f"Unable to send message to queue: {text_to_send} chapter: {chapter_id} story_id: {story_id}, exception was: {e}")    
+    # Return HTML with 2 buttons, one to view the new chapter and one to return to the edit screen for the newly created chapter
     return {
         "statusCode": 200,
         "headers": {"Content-Type": "text/html"},
@@ -164,6 +192,7 @@ def lambda_handler(event, context):
             new_option_id=new_option_id if new_option_text else None,
         ),
     }
+
 
 def get_chapter(story_id, chapter_id):
     print(f"Querying for story: {story_id} and chapter: {chapter_id}")
@@ -177,18 +206,20 @@ def get_chapter(story_id, chapter_id):
     )
     print("Got response")
     print(response)
-    
+
     items = response.get("Items", [])
     if len(items) != 1:
         return error_page()
     _chapter = from_dynamodb_to_json(items[0])
     return Chapter(chapter=_chapter, filter_choices=False)
 
+
 def check_input(text):
     # TODO what would be deemed malicious / could we check this before sending request?
     pass
 
-def error_page(reason: str = ''):
+
+def error_page(reason: str = ""):
     return {"statusCode": 404, "body": f"{reason}"}
 
 
@@ -200,14 +231,17 @@ def from_dynamodb_to_json(item):
 def generate_body(story_id, chapter_id, new_option_id):
     html = get_html()
     style = get_style()
-    
-    new_chapter_button = f'<div class=center><a id="edit_new_chapter_button class="button" href=https://bne1jvubt0.execute-api.eu-central-1.amazonaws.com/default/edit?story={story_id}&chapter={new_option_id}><center>Edit the newly created chapter</center></a></div>' if new_option_id else ''
+
+    new_chapter_button = (
+        f'<div class=center><a id="edit_new_chapter_button class="button" href=https://bne1jvubt0.execute-api.eu-central-1.amazonaws.com/default/edit?story={story_id}&chapter={new_option_id}><center>Edit the newly created chapter</center></a></div>'
+        if new_option_id
+        else ""
+    )
     view_updated_chapter_button = f'<div class=center><a id="view_edited_chapter_button class="button" href=https://bne1jvubt0.execute-api.eu-central-1.amazonaws.com/default/story-handler?story={story_id}&chapter={chapter_id}><center>View your changes to chapter {chapter_id}</center></a></div>'
     buttons = [new_chapter_button, view_updated_chapter_button]
     formatted = html % (style, "".join(buttons))
     # print(formatted)
     return formatted
-
 
 
 def get_style():
@@ -311,118 +345,6 @@ def get_html():
     </html>
     """
 
+
 if __name__ == "__main__":
-    lambda_handler(
-        {
-            "version": "1.0",
-            "resource": "/update_story",
-            "path": "/default/update_story",
-            "httpMethod": "GET",
-            "headers": {
-                "Content-Length": "0",
-                "Host": "bne1jvubt0.execute-api.eu-central-1.amazonaws.com",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.0.0 Safari/537.36",
-                "X-Amzn-Trace-Id": "Root=1-62cdf9ca-6555c8a93bb1c77d34dbff10",
-                "X-Forwarded-For": "109.40.242.10",
-                "X-Forwarded-Port": "443",
-                "X-Forwarded-Proto": "https",
-                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
-                "accept-encoding": "gzip, deflate, br",
-                "accept-language": "en-US,en;q=0.9,sv-SE;q=0.8,sv;q=0.7",
-                "dnt": "1",
-                "sec-ch-ua": '".Not/A)Brand";v="99", "Google Chrome";v="103", "Chromium";v="103"',
-                "sec-ch-ua-mobile": "?0",
-                "sec-ch-ua-platform": '"Windows"',
-                "sec-fetch-dest": "document",
-                "sec-fetch-mode": "navigate",
-                "sec-fetch-site": "none",
-                "sec-fetch-user": "?1",
-                "upgrade-insecure-requests": "1",
-            },
-            "multiValueHeaders": {
-                "Content-Length": ["0"],
-                "Host": ["bne1jvubt0.execute-api.eu-central-1.amazonaws.com"],
-                "User-Agent": [
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.0.0 Safari/537.36"
-                ],
-                "X-Amzn-Trace-Id": ["Root=1-62cdf9ca-6555c8a93bb1c77d34dbff10"],
-                "X-Forwarded-For": ["109.40.242.10"],
-                "X-Forwarded-Port": ["443"],
-                "X-Forwarded-Proto": ["https"],
-                "accept": [
-                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9"
-                ],
-                "accept-encoding": ["gzip, deflate, br"],
-                "accept-language": ["en-US,en;q=0.9,sv-SE;q=0.8,sv;q=0.7"],
-                "dnt": ["1"],
-                "sec-ch-ua": [
-                    '".Not/A)Brand";v="99", "Google Chrome";v="103", "Chromium";v="103"'
-                ],
-                "sec-ch-ua-mobile": ["?0"],
-                "sec-ch-ua-platform": ['"Windows"'],
-                "sec-fetch-dest": ["document"],
-                "sec-fetch-mode": ["navigate"],
-                "sec-fetch-site": ["none"],
-                "sec-fetch-user": ["?1"],
-                "upgrade-insecure-requests": ["1"],
-            },
-            "queryStringParameters": {
-                "_text": "One night, the boy woke up from a loud cracking sound just outside his house.",
-                "chapter_id": "3",
-                "new_option_id": "4",
-                "new_option_text": "",
-                "option_3.1": "The boy went outside to investigate",
-                "option_3.2": "The boy, who was used to these kind of sounds, quickly fell back asleep",
-                "story_id": "test_story",
-            },
-            "multiValueQueryStringParameters": {
-                "_text": [
-                    "One night, the boy woke up from a loud cracking sound just outside his house."
-                ],
-                "chapter_id": ["3"],
-                "new_option_id": ["4"],
-                "new_option_text": [""],
-                "option_3.1": ["The boy went outside to investigate"],
-                "option_3.2": [
-                    "The boy, who was used to these kind of sounds, quickly fell back asleep"
-                ],
-                "story_id": ["test_story"],
-            },
-            "requestContext": {
-                "accountId": "679585051464",
-                "apiId": "bne1jvubt0",
-                "domainName": "bne1jvubt0.execute-api.eu-central-1.amazonaws.com",
-                "domainPrefix": "bne1jvubt0",
-                "extendedRequestId": "VLP3sgx6FiAEMHw=",
-                "httpMethod": "GET",
-                "identity": {
-                    "accessKey": None,
-                    "accountId": None,
-                    "caller": None,
-                    "cognitoAmr": None,
-                    "cognitoAuthenticationProvider": None,
-                    "cognitoAuthenticationType": None,
-                    "cognitoIdentityId": None,
-                    "cognitoIdentityPoolId": None,
-                    "principalOrgId": None,
-                    "sourceIp": "109.40.242.10",
-                    "user": None,
-                    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.0.0 Safari/537.36",
-                    "userArn": None,
-                },
-                "path": "/default/update_story",
-                "protocol": "HTTP/1.1",
-                "requestId": "VLP3sgx6FiAEMHw=",
-                "requestTime": "12/Jul/2022:22:46:34 +0000",
-                "requestTimeEpoch": 1657665994634,
-                "resourceId": "ANY /update_story",
-                "resourcePath": "/update_story",
-                "stage": "default",
-            },
-            "pathParameters": None,
-            "stageVariables": None,
-            "body": None,
-            "isBase64Encoded": False,
-        },
-        None,
-    )
+    pass
