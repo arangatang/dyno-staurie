@@ -16,3 +16,16 @@ The local commands write generated HTML to `/tmp/storyweb/index.html`
 1. navigate to `localhost:8000`
 
 Install some plugin for active reload for simpler development.
+
+
+### To deploy
+
+Do these steps for each modified lambda:
+
+1.  cd venv/lib/python3.8/site-packages
+2.  zip -r ../../../../my-deployment-package.zip
+3.  cd ../../../../lambdas
+4.  zip -g -r my-deployment-package.zip storyweb
+5.  cp storyweb/lambdas/read_story_lambda/read_story_lambda.py /tmp/storyweb/lambda_function.py
+6.  zip -g -j my-deployment-package.zip /tmp/storyweb/lambda_function.py 
+7.  upload to the correct lambda

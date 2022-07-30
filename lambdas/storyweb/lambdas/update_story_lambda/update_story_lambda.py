@@ -7,10 +7,10 @@ from storyweb.style import load_css
 ddbclient = boto3.client("dynamodb")
 table = boto3.resource("dynamodb").Table(DDB_TABLE_NAME)
 sqs = boto3.resource("sqs")
-queue = sqs.get_queue_by_name(QueueName="stories-texts-to-process.fifo")
 
 
 def lambda_handler(event, context):
+    queue = sqs.get_queue_by_name(QueueName="stories-texts-to-process.fifo")
     params = event.get("queryStringParameters", {})
     if not (params):
         return error_page("Invalid get parameters")
