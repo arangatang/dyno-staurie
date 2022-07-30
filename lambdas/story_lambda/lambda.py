@@ -129,7 +129,7 @@ class Chapter:
         self.filter_choices = filter_choices
 
         self.chapter_id = chapter["chapter"]
-        self.image = chapter.get("image", "")
+        self.image = chapter.get("image", DEFAULT_IMAGE)
         self.options = ChapterOptions(chapter.get("options", []))
 
         self.is_final_chapter = not self.options.has_options()
