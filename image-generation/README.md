@@ -3,7 +3,7 @@
 1. Ensure cuda is installed properly 
 1. Ensure boto3 can fetch credentials for the account
 1. source the venv `source venv/bin/activate` (or create a new one with this command and then source it: `python3 -m venv venv`)
-1. run `python3 -m pip install -r requirements.py`
+1. run `python3 -m pip install -r requirements.txt`
 1. export the cuda directories, i.e.:
 ```
 export PATH=$PATH:/usr/local/cuda-11.7/bin/

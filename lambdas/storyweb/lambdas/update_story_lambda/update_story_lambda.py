@@ -1,88 +1,13 @@
-from typing import Dict, List
 import boto3
 from boto3.dynamodb.types import TypeDeserializer
-
-
-DDB_TABLE = "arn:aws:dynamodb:eu-central-1:679585051464:table/stories"
-DDB_TABLE_NAME = "stories"
-
+from storyweb.utils.chapters import Chapter
+from storyweb.utils.constants import DDB_TABLE_NAME, error_page
+from storyweb.style import load_css
 
 ddbclient = boto3.client("dynamodb")
 table = boto3.resource("dynamodb").Table(DDB_TABLE_NAME)
 sqs = boto3.resource("sqs")
 queue = sqs.get_queue_by_name(QueueName="stories-texts-to-process.fifo")
-
-
-class ChapterOptions:
-    options: List[dict]
-
-    def __init__(self, options: List[dict]):
-        self.options = options
-
-    def get_choices(self) -> Dict[str, str]:
-        return {
-            option.get("next"): option.get("text", "Continue")
-            for option in self.options
-        }
-
-    def get_path_for_choice(self, option: int) -> str:
-        return str(self.options[option].get("next"))
-
-    def has_options(self) -> bool:
-        return len(self.options) > 0
-
-
-class Chapter:
-    text: str = ""
-    options: ChapterOptions = ""
-    is_final_chapter: bool = True
-    is_work_in_progress: bool = True
-    is_start_node: bool = True
-    chapter_id = ""
-    image = ""
-    chapter = {}
-
-    def __init__(self, chapter: dict, filter_choices: bool = True):
-        # Chapter numbers start with 1.yml
-        # For multiple choices subsequent
-        self.chapter = chapter
-        self.text = chapter.get("text", None)
-        self.filter_choices = filter_choices
-
-        self.chapter_id = chapter["chapter"]
-        self.image = chapter.get("image", "")
-        self.options = ChapterOptions(chapter.get("options", []))
-
-        self.is_final_chapter = not self.options.has_options()
-        self.is_work_in_progress = chapter.get("is_work_in_progress", False)
-        self.is_start_node = chapter.get("is_start_node", False)
-        self.disabled_options = chapter.get("disabled_options", [])
-
-    def get_choices(self) -> Dict[str, str]:
-        if self.is_final_chapter:
-            return {}
-        if self.filter_choices:
-            return {
-                k: v
-                for k, v in self.options.get_choices().items()
-                if k not in self.disabled_options
-            }
-        else:
-            return {k: v for k, v in self.options.get_choices().items()}
-
-    def get_path_for_choice(self, choice):
-        if self.is_final_chapter:
-            raise ValueError(f"No options available for chapter {self.chapter_id}")
-        return self.options.get_path_for_choice(choice)
-
-    def is_final(self):
-        return self.is_final_chapter
-
-    def is_start(self):
-        return self.is_start_node
-
-    def is_unfinished(self):
-        return self.is_work_in_progress
 
 
 def lambda_handler(event, context):
@@ -93,6 +18,9 @@ def lambda_handler(event, context):
     chapter_id = params.get("chapter_id", None)
     chapter_text = params.get("chapter_text", None)
     story_id = params.get("story_id", None)
+
+    if event.get("isLocal", False):
+        return generate_response(story_id, chapter_id, "123")
 
     if not chapter_text or not chapter_id or not story_id:
         return error_page(reason="text, chapter id and story id are required")
@@ -143,7 +71,7 @@ def lambda_handler(event, context):
                     story=story_id, chapter=new_option_id, is_work_in_progress=True
                 )
             )
-            disabled_options.append(new_option_id)
+        disabled_options.append(new_option_id)
         existing_options[new_option_id] = new_option_text
 
     # Create the updated chapter
@@ -171,25 +99,33 @@ def lambda_handler(event, context):
 
     try:
         if text_was_updated:
-            print("text was updated, attempting to send message to SQS")        
+            print("text was updated, attempting to send message to SQS")
             queue.send_message(
                 MessageBody=text_to_send,
                 MessageAttributes={
                     "story": {"StringValue": story_id, "DataType": "String"},
                     "chapter": {"StringValue": chapter_id, "DataType": "String"},
                 },
-                MessageGroupId=f"{story_id}#{chapter_id}"
+                MessageGroupId=f"{story_id}#{chapter_id}",
             )
     except Exception as e:
-        print(f"Unable to send message to queue: {text_to_send} chapter: {chapter_id} story_id: {story_id}, exception was: {e}")    
+        print(
+            f"Unable to send message to queue: {text_to_send} chapter: {chapter_id} story_id: {story_id}, exception was: {e}"
+        )
     # Return HTML with 2 buttons, one to view the new chapter and one to return to the edit screen for the newly created chapter
+    return generate_response(
+        story_id,
+        chapter_id,
+        new_option_id if new_option_text else None,
+    )
+
+
+def generate_response(story_id, chapter_id, new_option_id):
     return {
         "statusCode": 200,
         "headers": {"Content-Type": "text/html"},
         "body": generate_body(
-            story_id=story_id,
-            chapter_id=chapter_id,
-            new_option_id=new_option_id if new_option_text else None,
+            story_id=story_id, chapter_id=chapter_id, new_option_id=new_option_id
         ),
     }
 
@@ -219,10 +155,6 @@ def check_input(text):
     pass
 
 
-def error_page(reason: str = ""):
-    return {"statusCode": 404, "body": f"{reason}"}
-
-
 def from_dynamodb_to_json(item):
     d = TypeDeserializer()
     return {k: d.deserialize(value=v) for k, v in item.items()}
@@ -230,7 +162,7 @@ def from_dynamodb_to_json(item):
 
 def generate_body(story_id, chapter_id, new_option_id):
     html = get_html()
-    style = get_style()
+    style = load_css("update_story_lambda")
 
     new_chapter_button = (
         f'<div class=center><a id="edit_new_chapter_button class="button" href=https://bne1jvubt0.execute-api.eu-central-1.amazonaws.com/default/edit?story={story_id}&chapter={new_option_id}><center>Edit the newly created chapter</center></a></div>'
@@ -242,85 +174,6 @@ def generate_body(story_id, chapter_id, new_option_id):
     formatted = html % (style, "".join(buttons))
     # print(formatted)
     return formatted
-
-
-def get_style():
-    return """
-   body {
-        background-color: white;
-        margin: 0;
-    }
-
-    img {
-        display: block;
-        margin-left: 11vh;
-        padding-right: 11vh;
-        width: 30vh;
-        float: left;
-    }
-
-    p {
-        text-align: center;
-        line-height: 100px;
-        font-size: xx-large;
-    }
-
-    .center{
-        width: 45%;
-        margin: 0 auto;
-        background-color: whitesmoke;
-        border-style: ridge;
-        border-radius: 5px
-    }
-
-    a:link { text-decoration: none; }
-    a:visited { text-decoration: none; }
-
-    .center:hover {
-        background-color: floralwhite;
-    }
-
-    a {
-        font-size: x-large;
-        line-height: 50px;
-    }
-
-    .edit-window {
-        display: none;
-        height: 50%;
-    }
-    
-    html {
-        height: 100%;
-    }
-    
-    body {
-        min-height: 100%;
-    }
-    
-    #mynetwork {
-        width: 100%;
-        height: 100%;
-        border: 1px solid lightgray;
-        min-height: 100%;
-    }
-    
-    center { 
-        width: 100vw;
-        height: 50vh;
-    }
-    
-    .edit-window {
-        padding-top: 10vh;
-    }
-    
-    .edit-window > form {
-        padding-top: 2vh;
-        padding-right: 2vh;
-        display: flex;
-        flex-direction: column;
-    }
-    """
 
 
 def get_html():
@@ -344,7 +197,3 @@ def get_html():
 
     </html>
     """
-
-
-if __name__ == "__main__":
-    pass

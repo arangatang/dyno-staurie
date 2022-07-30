@@ -1,0 +1,35 @@
+img {
+    display: block;
+    margin-left: 11vh;
+    padding-right: 11vh;
+    width: 30vh;
+    float: left;
+}
+
+.edit-window {
+    display: none;
+    height: 50%;
+}
+
+#mynetwork {
+    width: 100%;
+    height: 100%;
+    border: 1px solid lightgray;
+    min-height: 100%;
+}
+
+center {
+    width: 100vw;
+    height: 50vh;
+}
+
+.edit-window {
+    padding-top: 10vh;
+}
+
+.edit-window>form {
+    padding-top: 2vh;
+    padding-right: 2vh;
+    display: flex;
+    flex-direction: column;
+}

@@ -1,0 +1,37 @@
+body {
+    background-color: white;
+}
+
+
+p {
+    text-align: center;
+    line-height: 100px;
+    font-size: xx-large;
+}
+
+.center {
+    width: 45%;
+    margin: 0 auto;
+    background-color: whitesmoke;
+    border-style: ridge;
+    border-radius: 5px
+}
+
+.center:hover {
+    background-color: floralwhite;
+}
+
+
+a:link {
+    text-decoration: none;
+}
+
+a:visited {
+    text-decoration: none;
+    color: black;
+}
+
+a {
+    font-size: x-large;
+    line-height: 50px;
+}
