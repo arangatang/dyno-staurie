@@ -1,8 +1,7 @@
-from typing import Dict, List
+from typing import Dict
 import boto3
 from boto3.dynamodb.types import TypeDeserializer
 from storyweb.utils.constants import DDB_TABLE_NAME, error_page
-from storyweb.style import load_css
 from storyweb.utils.chapters import Chapter
 from storyweb.utils.loaders import get_jinja_environment
 
@@ -10,7 +9,6 @@ ddbclient = boto3.client("dynamodb")
 
 
 def lambda_handler(event, context):
-    load_css("read_story_lambda")
     chapter_id = event.get("queryStringParameters", {}).get("chapter", None)
     story_id = event.get("queryStringParameters", {}).get("story", None)
 

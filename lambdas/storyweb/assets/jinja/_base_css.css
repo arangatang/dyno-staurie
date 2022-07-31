@@ -1,0 +1,7 @@
+.navbar-brand>img {
+    max-width: 30;
+}
+
+.button.is-primary {
+    background-color: #0088ff
+}

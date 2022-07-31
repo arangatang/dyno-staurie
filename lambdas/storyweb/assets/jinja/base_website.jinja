@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    {% include "_common_headers.jinja" %}
+    <style>
+        {% include "_base_css.css" %}
+    </style>
+    {% block headers %}
+    {% endblock headers %}
+</head>
+
+<body>
+    <header>
+        <nav class="navbar" role="navigation" aria-label="main navigation">
+            <div class="navbar-brand">
+                <a class="navbar-item" href="https://bulma.io">
+                    <img src="https://story-images.s3.eu-central-1.amazonaws.com/icons/apple-touch-icon.png" width="30"
+                        height="30">
+                </a>
+
+                <a id="navbarBurger" role="button" class="navbar-burger burger" data-target="navbarContents">
+                    <span aria-hidden="true"></span>
+                    <span aria-hidden="true"></span>
+                    <span aria-hidden="true"></span>
+                </a>
+            </div>
+
+            <div id="navbarContents" class="navbar-menu">
+                <div class="navbar-start">
+                    <a class="navbar-item"
+                        href="https://bne1jvubt0.execute-api.eu-central-1.amazonaws.com/default/story-handler?story=test_story&chapter=1">
+                        Home
+                    </a>
+
+                    <div class="navbar-item has-dropdown is-hoverable">
+                        <a class="navbar-link">
+                            Read
+                        </a>
+                        <div class="navbar-dropdown">
+                            <a class="navbar-item" href="https://github.com/arangatang/dyno-staurie">
+                                Search for a story
+                            </a>
+                            <a class="navbar-item">
+                                Read random chapter
+                            </a>
+                        </div>
+                    </div>
+
+                    <div class="navbar-item has-dropdown is-hoverable">
+                        <a class="navbar-link">
+                            Edit
+                        </a>
+                        <div class="navbar-dropdown">
+                            <a class="navbar-item">
+                                Find a story to edit
+                            </a>
+                            <a class="navbar-item">
+                                Create a new story
+                            </a>
+                            {% block edit %}
+                            {% endblock edit %}
+                        </div>
+                    </div>
+                    <a class="navbar-item">
+                        About
+                    </a>
+
+                    <div class="navbar-item has-dropdown is-hoverable">
+                        <a class="navbar-link">
+                            More
+                        </a>
+
+                        <div class="navbar-dropdown">
+                            <a class="navbar-item" href="https://github.com/arangatang/dyno-staurie">
+                                Github
+                            </a>
+                            <a class="navbar-item" href="https://discordapp.com/channels/1003293300679254066/1003317329452601457">
+                                Contact
+                            </a>
+                            <hr class="navbar-divider">
+                            <a class="navbar-item"
+                                href="https://discordapp.com/channels/1003293300679254066/1003317377791967232">
+                                Report an issue
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="navbar-end">
+                    <div class="navbar-item">
+                        <div class="buttons">
+                            <a class="button is-primary">
+                                <strong>Sign up</strong>
+                            </a>
+                            <a class="button is-light">
+                                Log in
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% include "_navbar_scripts.jinja" %}
+        </nav>
+    </header>
+    {% block content %}
+    <h1>Something went wrong when loading the website<h1>
+    {% endblock content %}
+</body>
+
+{% include "_footer.jinja" %}
+
+</html>
