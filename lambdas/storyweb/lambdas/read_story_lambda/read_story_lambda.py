@@ -4,6 +4,7 @@ from boto3.dynamodb.types import TypeDeserializer
 from storyweb.utils.constants import DDB_TABLE_NAME, error_page
 from storyweb.style import load_css
 from storyweb.utils.chapters import Chapter
+from storyweb.utils.loaders import get_jinja_environment
 
 ddbclient = boto3.client("dynamodb")
 
@@ -44,7 +45,7 @@ def lambda_handler(event, context):
     return {
         "statusCode": 200,
         "headers": {"Content-Type": "text/html"},
-        "body": generate_body(story_id, image, text, choices),
+        "body": generate_body(story_id, image, text, choices, chapter),
     }
 
 
@@ -53,34 +54,17 @@ def from_dynamodb_to_json(item):
     return {k: d.deserialize(value=v) for k, v in item.items()}
 
 
-def generate_body(story_name: str, image: str, text: str, options: Dict[str, str]):
-    buttons = "".join(
-        [
-            f'<div class=center><a id=option_{option_id} class="button" href=https://bne1jvubt0.execute-api.eu-central-1.amazonaws.com/default/story-handler?story={story_name}&chapter={option_id}><center>{option_text}</center></a></div>'
-            for option_id, option_text in options.items()
-        ]
+def generate_body(
+    story_name: str, image: str, text: str, options: Dict[str, str], chapter: Chapter
+):
+    environment = get_jinja_environment()
+    template = environment.get_template("read_story_template.jinja")
+    options = [{"id": key, "text": value} for key, value in options.items()]
+    body = template.render(
+        text=text,
+        options=options,
+        story_name=story_name,
+        image=image,
+        chapter=chapter.chapter_id,
     )
-    content = f"""
-    <div>
-        <img src='{image}' alt='{text}'/>
-        <p id=text>{text}</p>
-        {buttons}
-    </div>
-    """
-
-    body = f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <title>page title</title>
-        <style>
-        {load_css("read_story_lambda")}
-        </style>
-    </head>
-    <body>
-        {content}
-    </body>
-    </html>
-    """
     return body

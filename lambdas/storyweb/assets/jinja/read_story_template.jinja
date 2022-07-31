@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{story_name}} - Chapter {{chapter}}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <link rel="icon" type="image/png" href="https://story-images.s3.eu-central-1.amazonaws.com/icons/favicon-32x32.png" sizes="32x32">
+    <style>
+        p,
+        h1,
+        h2 {
+            text-align: center;
+        }
+
+        img {
+            display: block;
+            width: 500px;
+            margin-left: auto;
+            margin-right: auto;
+            margin-top: 60px;
+            padding-bottom: 50px;
+        }
+    </style>
+</head>
+
+<body>
+    <section class="section">
+        <div class="columns is-centered">
+            <div class="column is-half">
+                <h1 class="title">{{story_name}}</h1>
+                <img src={{image}}
+                    alt='{{text}}' class="image" />
+
+                <div class="content">
+                    <h2>Chapter {{chapter}}</h2>
+                    <p>{{text}}</p>
+                </div>
+                <div class="columns is-centered">
+                    <div class="column is-two-fifths">
+                        <div class="buttons">
+                            {% for option in options %}
+                                <a id={{option.id}} class="button is-fullwidth"
+                                    href=https://bne1jvubt0.execute-api.eu-central-1.amazonaws.com/default/story-handler?story={{story_name}}&chapter={{option.id}}>
+                                    {{option.text}}
+                                </a>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+</body>
+</html>
