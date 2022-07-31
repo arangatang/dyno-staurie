@@ -20,6 +20,11 @@ Install some plugin for active reload for simpler development.
 
 ### To deploy
 
+#### Via script
+
+run `./upload_lambda.sh <local lambda.py> <name of lambda function>`
+
+#### Manually
 Do these steps for each modified lambda:
 
 1.  cd venv/lib/python3.8/site-packages
@@ -28,4 +33,4 @@ Do these steps for each modified lambda:
 4.  zip -g -r my-deployment-package.zip storyweb
 5.  cp storyweb/lambdas/read_story_lambda/read_story_lambda.py /tmp/storyweb/lambda_function.py
 6.  zip -g -j my-deployment-package.zip /tmp/storyweb/lambda_function.py 
-7.  upload to the correct lambda
+7.  upload to the correct lambda `aws lambda update-function-code --function-name $DESTINATION --zip-file fileb://$OUTPUT_ZIP --publish` 
