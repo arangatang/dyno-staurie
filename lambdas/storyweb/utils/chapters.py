@@ -71,3 +71,10 @@ class Chapter:
 
     def is_unfinished(self):
         return self.is_work_in_progress
+
+    def to_dict(self):
+        return dict(
+            id=self.chapter_id,
+            image=self.image,
+            text=self.text,
+        )

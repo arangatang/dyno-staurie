@@ -1,0 +1,82 @@
+{% extends "base_website.jinja" %}
+
+{% block headers %}
+<script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+<style>
+    {% include "_edit_story_lambda.css" %}
+</style>
+{% endblock headers %}
+
+{% block content %}
+<div class="columns">
+    <div id="mynetwork" class="column is-half is-offset-one-quarter"></div>
+</div>
+<div id="edit_windows">
+    {% for chapter in chapters %}
+    {% if chapter.id == current_chapter_id %}
+    <div class="columns edit-window edit-window-clicked" style="display: block !important" id="edit-window-{{chapter.id}}">
+    {% else %}
+    <div class="columns edit-window" id="edit-window-{{chapter.id}}">
+    {% endif %}
+        <div class="column is-half">
+            <img src="{{chapter.image}}" loading="lazy">
+        </div>
+        <div class="column is-half"> 
+            <form action="update_story" method="get">
+                <label for="chapter_text">Chapter text: </label>
+                <input type="text" id="chapter_text" name="chapter_text" value="{{chapter.text}}"><br><br>
+                {{chapter.options}}
+                <label for="new_option">New choice text: </label>
+                <input type="text" id="new_option_text" name="new_option_text"><br><br>
+                <label for="new_option_id">The new choice should go to chapter with id: </label>
+                <input type="text" id="new_option_id" name="new_option_id" value="{{new_option_id}}"><br><br>
+                <input type="hidden" name="story_id" value={{story_name}} class="hidden">
+                <input type="hidden" name="chapter_id" value={{chapter.id}} class="hidden">
+
+                <input type="submit" value="Submit">
+            </form>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<script type="text/javascript">
+    // create an array with nodes
+    var nodes = new vis.DataSet([
+    {{ nodes }}
+    ]);
+
+    // create an array with edges
+    var edges = new vis.DataSet([
+    {{ edges }}
+    ]);
+
+    // create a network
+    var container = document.getElementById("mynetwork");
+    var data = {
+        nodes: nodes,
+        edges: edges,
+    };
+    var options = { layout: { randomSeed: 1994 } };
+    var network = new vis.Network(container, data, options);
+    network.selectNodes([{{ selected_node }}]);
+
+    network.on('click', function (properties) {
+        var ids = properties.nodes;
+        var clickedNodes = nodes.get(ids);
+        console.log('clicked nodes:', clickedNodes);
+        if (clickedNodes.length == 1) {
+            console.log("clicked node:", "edit-window-" + clickedNodes[0].id)
+            var clicked = document.getElementById("edit-window-" + clickedNodes[0].id);
+            clicked.style.setProperty("display", "block", "!important")
+        }
+        var clickedClassName = "edit-window-clicked"
+        var previouslyClicked = document.getElementsByClassName(clickedClassName);
+        if (previouslyClicked.length == 1) {
+            previouslyClicked[0].style.setProperty("display", "none", "!important");
+            previouslyClicked[0].classList.remove(clickedClassName);
+        }
+        clicked.classList.add(clickedClassName);
+    });
+</script>
+{% endblock content %}

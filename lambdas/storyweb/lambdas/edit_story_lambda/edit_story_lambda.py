@@ -1,9 +1,10 @@
 from typing import Dict, List
 import boto3
-from boto3.dynamodb.types import TypeDeserializer
 from storyweb.utils.chapters import Chapter
 from storyweb.utils.constants import DDB_TABLE_NAME, error_page
 from storyweb.style import load_css
+from storyweb.utils.loaders import get_jinja_environment
+from storyweb.utils.utils import from_dynamodb_to_json
 
 ddbclient = boto3.client("dynamodb")
 
@@ -44,42 +45,33 @@ def lambda_handler(event, context):
     return {
         "statusCode": 200,
         "headers": {"Content-Type": "text/html"},
-        "body": generate_body(
-            get_edit_windows(chapters, story_id=story_id, current_chapter=chapter_id),
-            nodes,
-            edges,
-            chapter_id=chapter_id,
+        "body": get_jinja_environment()
+        .get_template("edit_story_template.jinja")
+        .render(
+            nodes=nodes,
+            edges=edges,
+            select_node=chapter_id if chapter_id else "",
+            chapters=[chapter.to_dict() for chapter in chapters.values()],
+            story_name=story_id,
+            new_option_id=max([int(id.split(".")[0]) for id in chapters]) + 1,
         ),
     }
 
 
-def from_dynamodb_to_json(item):
-    d = TypeDeserializer()
-    return {k: d.deserialize(value=v) for k, v in item.items()}
-
-
-def get_edge(_from, to):
-    return '{ from: %s, to: %s, arrows: { to: { enabled: true, type: "arrow" }}},' % (
-        _from,
-        to,
-    )
-
-
-def get_node(id: str, is_work_in_progress: bool, is_final: bool, is_start: bool):
-    if is_work_in_progress:
-        node_color = "#FFFF00"  # yellow
-    elif is_start:
-        node_color = "#00FF00"  # green
-    elif is_final:
-        node_color = "#FF0000"  # red
-    else:
-        node_color = "#4DA4EA"  # blue
-
-    color = 'color: { background: "%s"}' % node_color
-    return '{ id: "%s", label: "%s", %s },' % (id, id, color)
-
-
 def get_nodes(chapters: Dict[str, Chapter]):
+    def get_node(id: str, is_work_in_progress: bool, is_final: bool, is_start: bool):
+        if is_work_in_progress:
+            node_color = "#FFFF00"  # yellow
+        elif is_start:
+            node_color = "#00FF00"  # green
+        elif is_final:
+            node_color = "#FF0000"  # red
+        else:
+            node_color = "#4DA4EA"  # blue
+
+        color = 'color: { background: "%s"}' % node_color
+        return '{ id: "%s", label: "%s", %s },' % (id, id, color)
+
     nodes = []
     for key, chapter in chapters.items():
         nodes.append(
@@ -91,52 +83,16 @@ def get_nodes(chapters: Dict[str, Chapter]):
     return "\n".join(nodes)
 
 
-def get_edit_window_existing_option(option_id: str, option_text: str):
-    return """
-        <label for="{option_id}">Choice leading to chapter: {option_id}</label>
-        <input type="text" id="option_{option_id}" name="option_{option_id}" default="{option_text}" value="{option_text}"><br><br>
-    """.format(
-        option_id=option_id, option_text=option_text
-    )
-
-
-def get_edit_window(
-    chapter: Chapter, next_choice_id: int, story_id: str, should_show: bool
-):
-    options = []
-    for option_id, option_text in chapter.get_choices().items():
-        options.append(get_edit_window_existing_option(option_id, option_text))
-
-    return get_edit_window_html().format(
-        CHAPTER_ID=chapter.chapter_id,
-        IMAGE=chapter.image,  # TODO remove
-        EXISTING_OPTIONS="""
-        """.join(
-            options
-        ),
-        STORY_ID=story_id,
-        NEXT_CHOICE_ID=next_choice_id,
-        CHAPTER_TEXT=chapter.text,
-        DISPLAY=' edit-window-clicked" style="display: block' if should_show else "",
-    )
-
-
-def get_edit_windows(chapters: Dict[str, Chapter], story_id: str, current_chapter: str):
-    next_choice_id = max([int(id.split(".")[0]) for id in chapters]) + 1
-    return "".join(
-        [
-            get_edit_window(
-                chapter,
-                next_choice_id,
-                story_id=story_id,
-                should_show=current_chapter == chapter_id,
-            )
-            for chapter_id, chapter in chapters.items()
-        ]
-    )
-
-
 def get_edges(chapters: Dict[str, Chapter]):
+    def get_edge(_from, to):
+        return (
+            '{ from: %s, to: %s, arrows: { to: { enabled: true, type: "arrow" }}},'
+            % (
+                _from,
+                to,
+            )
+        )
+
     edges = []
     for chapter_id, chapter in chapters.items():
         for choice in chapter.get_choices().keys():
@@ -145,101 +101,3 @@ def get_edges(chapters: Dict[str, Chapter]):
     """.join(
         edges
     )
-
-
-def select_node(node_id):
-    return node_id if node_id else ""
-
-
-def generate_body(edit_windows, nodes, edges, chapter_id):
-    html = get_html()
-    style = load_css("edit_story_lambda")
-    formatted = html % (style, edit_windows, nodes, edges, select_node(chapter_id))
-    # print(formatted)
-    return formatted
-
-
-def get_html():
-    return """
-    <!DOCTYPE html>
-    <html lang="en">
-
-    <head>
-        <title>Network</title>
-        <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
-        <style type="text/css">
-        %s
-        </style>
-    </head>
-
-    <body>
-        <center>
-            <div id="mynetwork"></div>
-        </center>
-        <div id="edit_windows">
-            %s
-        </div>
-        <script type="text/javascript">
-            // create an array with nodes
-            var nodes = new vis.DataSet([
-                %s
-            ]);
-
-            // create an array with edges
-            var edges = new vis.DataSet([
-                %s
-            ]);
-
-            // create a network
-            var container = document.getElementById("mynetwork");
-            var data = {
-                nodes: nodes,
-                edges: edges,
-            };
-            var options = { layout : { randomSeed: 1994 }};
-            var network = new vis.Network(container, data, options);
-            network.selectNodes([%s]);
-
-            network.on( 'click', function(properties) {
-                var ids = properties.nodes;
-                var clickedNodes = nodes.get(ids);
-                console.log('clicked nodes:', clickedNodes);
-                if(clickedNodes.length == 1){
-                    console.log("clicked node:", "edit-window-"+clickedNodes[0].id)
-                    var clicked = document.getElementById("edit-window-"+clickedNodes[0].id);
-                    clicked.style.display = "block";
-                } 
-                var clickedClassName = "edit-window-clicked"
-                var previouslyClicked = document.getElementsByClassName(clickedClassName);
-                if(previouslyClicked.length == 1){
-                    previouslyClicked[0].style.display = "none";
-                    previouslyClicked[0].classList.remove(clickedClassName);
-                }
-                clicked.classList.add(clickedClassName);   
-            });
-        </script>
-    </body>
-
-    </html>
-    """
-
-
-def get_edit_window_html():
-    return """
-    <div class="edit-window{DISPLAY}" id="edit-window-{CHAPTER_ID}">
-        <img src="{IMAGE}" loading="lazy">
-        <form action="update_story" method="get">
-            <label for="chapter_text">Chapter text: </label>
-            <input type="text" id="chapter_text" name="chapter_text" value="{CHAPTER_TEXT}"><br><br>
-            {EXISTING_OPTIONS}
-            <label for="new_option">New choice text: </label>
-            <input type="text" id="new_option_text" name="new_option_text"><br><br>
-            <label for="new_option_id">The new choice should go to chapter with id: </label>
-            <input type="text" id="new_option_id" name="new_option_id" value="{NEXT_CHOICE_ID}"><br><br>
-            <input type="hidden" name="story_id" value={STORY_ID} class="hidden">
-            <input type="hidden" name="chapter_id" value={CHAPTER_ID} class="hidden">
-
-            <input type="submit" value="Submit">
-        </form>
-    </div>
-    """

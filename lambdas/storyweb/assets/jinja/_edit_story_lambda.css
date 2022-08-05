@@ -1,0 +1,18 @@
+#edit_windows img {
+    display: block;
+    margin-left: 11vh;
+    padding-right: 11vh;
+    width: 30vh;
+    float: left;
+}
+
+.columns.edit-window {
+    display: none;
+}
+
+#mynetwork {
+    height: 50vh;
+    border: 1px solid lightgray;
+    min-height: 100%;
+    max-height: 100%;
+}
