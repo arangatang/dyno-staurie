@@ -77,4 +77,5 @@ class Chapter:
             id=self.chapter_id,
             image=self.image,
             text=self.text,
+            options=self.get_choices(),
         )

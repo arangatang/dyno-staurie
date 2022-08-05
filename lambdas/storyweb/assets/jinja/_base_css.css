@@ -5,3 +5,7 @@
 .button.is-primary {
     background-color: #0088ff
 }
+
+.fullheight {
+    min-height: 83vh;
+}
