@@ -24,7 +24,7 @@ BUCKET_NAME = "story-images"
 SQS_POLL_SLEEP_TIME = 60
 IMAGE_SIZE = 256  # nothing else works without retraining the model maybe use this: https://github.com/alexjc/neural-enhance
 DEFAULT_MODEL = MODELS.stable_diffusion
-NUM_IMAGES_TO_GENERATE = 2
+NUM_IMAGES_TO_GENERATE = 10
 
 import boto3
 
@@ -37,7 +37,7 @@ def generate_path(path, chapter, image_num):
 
 def setup_stable_diffusion():
     pipe = StableDiffusionPipeline.from_pretrained(
-        "CompVis/stable-diffusion-v1-4", use_auth_token=True
+        "runwayml/stable-diffusion-v1-5", use_auth_token=True
     ).to("cuda")
 
     def run_stable_diffusion(text, path, chapter):
