@@ -1,5 +1,5 @@
 import click
-from storyweb import edit_handler, read_handler, update_handler
+from storyweb import edit_handler, read_handler, update_handler, reimagine_handler
 from storyweb.utils.local_development import dump
 
 
@@ -18,6 +18,21 @@ def edit():
 def read():
     page = read_handler({}, {})
     dump(page)
+
+
+@cli.command()
+def reimagine():
+    dump(
+        reimagine_handler(
+            {
+                "queryStringParameters": {
+                    "text": "hello there this is text",
+                    "userId": "morning",
+                },
+            },
+            {},
+        )
+    )
 
 
 @cli.command()

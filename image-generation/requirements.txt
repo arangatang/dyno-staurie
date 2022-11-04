@@ -9,3 +9,4 @@ jax[cuda11_cudnn82]
 torch
 tqdm
 diffusers
+pydantic

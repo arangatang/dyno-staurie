@@ -7,3 +7,6 @@ from storyweb.lambdas.read_story_lambda.read_story_lambda import (
 from storyweb.lambdas.update_story_lambda.update_story_lambda import (
     lambda_handler as update_handler,
 )
+from storyweb.lambdas.reimagine_lambda.reimagine_lambda import (
+    lambda_handler as reimagine_handler,
+)
